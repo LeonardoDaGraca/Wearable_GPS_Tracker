@@ -3,3 +3,4 @@ blink.c
 gps_log.txt
 gps_metrics
 .vscode
+.DS_Store

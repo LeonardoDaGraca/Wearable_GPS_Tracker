@@ -9,6 +9,7 @@ Implementation of IMU functions
 #include "mpu6050.h"
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include <inttypes.h>
 
 IMU_Reading imu_buffer[MAX_IMU_READINGS];
 int imu_buffer_index = 0;
@@ -123,20 +124,33 @@ void process_imu_buffer() {
     imu_buffer_index = (imu_buffer_index + 1) % MAX_IMU_READINGS; 
 }
 
-void write_imu_buffer(FIL *file) {
-    char imu_log[200];
+void write_imu_buffer(FIL *file, uint64_t curr_time) {
+    char time_stamp_imu[500];
+    int line_offset = snprintf(time_stamp_imu, sizeof(time_stamp_imu), "%" PRIu64 ",IMU: ", curr_time);
 
     for (int i = 0; i < MAX_IMU_READINGS; i++) {
-      int index = (imu_buffer_index + i) % MAX_IMU_READINGS; //adjust index for circular buffer
-        snprintf(imu_log, sizeof(imu_log), 
-                 "IMU: %d, %d, %d, %d, %d, %d\n", 
-                 imu_buffer[index].ax, imu_buffer[index].ay, imu_buffer[index].az, 
-                 imu_buffer[index].gx, imu_buffer[index].gy, imu_buffer[index].gz);
-        UINT bytes_written;
-        FRESULT fr = f_write(file, imu_log, strlen(imu_log), &bytes_written);
-        if (fr != FR_OK) {
-            printf("Error writing IMU data to the file: %d\n", fr);
-            return;
+        int index = (imu_buffer_index + i) % MAX_IMU_READINGS; //adjust index for circular buffer
+        //add semicolon after each reading
+        if (i > 0) {
+            line_offset += snprintf(time_stamp_imu + line_offset,
+                                    sizeof(time_stamp_imu) - line_offset, ";");
         }
+
+        line_offset += snprintf(time_stamp_imu + line_offset, 
+                                sizeof(time_stamp_imu) - line_offset, 
+                                "%d,%d,%d,%d,%d,%d", 
+                                imu_buffer[index].ax, imu_buffer[index].ay, imu_buffer[index].az, 
+                                imu_buffer[index].gx, imu_buffer[index].gy, imu_buffer[index].gz);
+    }
+
+    //add newline
+    line_offset += snprintf(time_stamp_imu + line_offset, 
+                            sizeof(time_stamp_imu) - line_offset, 
+                            "\n");
+    UINT bytes_written;
+    FRESULT fr = f_write(file, time_stamp_imu, strlen(time_stamp_imu), &bytes_written);
+    if (fr != FR_OK) {
+        printf("Error writing IMU data to the file: %d\n", fr);
+        return;
     }
 }

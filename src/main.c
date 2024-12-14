@@ -53,22 +53,26 @@ MicroSD Module
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
 #include "ff.h"
-#include "sd_card.h" 
+#include "sd_card.h"
+#include <inttypes.h> 
 
 
 #define UART_ID uart1
 #define BAUD_RATE 9600
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
-#define LOG_DIR "gps_logs"
+#define GPS_DIR "gps_logs"
+#define IMU_DIR "imu_logs"
 
 FATFS fs;
-FIL file;
+FIL gps_file;
+FIL imu_file;
 FRESULT fr;
 
 void create_log_directory();
 int get_session_counter();
-void get_unique_filename(char *filename, int session);
+void get_unique_filename(char *filename, int session, int is_imu);
+uint64_t generate_timestamp();
 
 
 int main() {
@@ -104,18 +108,32 @@ int main() {
     
     //init directory and filename
     create_log_directory();
-    char filename[50];
+    char gps_filename[50];
+    char imu_filename[50];
     int session = get_session_counter();
-    get_unique_filename(filename, session);
+    get_unique_filename(gps_filename, session, 0);
+    get_unique_filename(imu_filename, session, 1);
 
-    //open log file for writing
-    fr = f_open(&file, filename, FA_WRITE | FA_CREATE_ALWAYS);
+    //open log files
+    fr = f_open(&gps_file, gps_filename, FA_WRITE | FA_CREATE_ALWAYS);
     if (fr != FR_OK) {
         printf("Error opening the file: %d\n", fr);
         return -1;
     }
 
-    printf("Logging to file %s\n", filename);
+    fr = f_open(&imu_file, imu_filename, FA_WRITE | FA_CREATE_ALWAYS);
+    if (fr != FR_OK) {
+        printf("Error opening IMU log file: %d\n", fr);
+        f_close(&gps_file);
+        return -1;
+    }
+
+    //write CSV headers
+    f_write(&gps_file, "Timestamp,NMEA\n", strlen("Timestamp,NMEA\n"), NULL);
+    f_write(&imu_file, "Timestamp,IMU_Readings\n", strlen("Timestamp,IMU_Readings\n"), NULL);
+
+    printf("Logging to file %s\n", gps_filename);
+    printf("Logging to file %s\n", imu_filename);
 
     //buffer to read sentences from UART GPS signal
     char gprmc_buff[100] = {0};
@@ -162,42 +180,56 @@ int main() {
                     sentence_code[gps_index - 3] = dat;
                 }
             }
-            printf("Sentence Code: %s, Full Sentence: %s\n", sentence_code, gps_buff);
         }
         if (is_gprmc_received || is_gpvtg_received) {
             printf("Writing to SD card...\n");
+            uint64_t curr_timestamp = generate_timestamp();
+
             if (is_gprmc_received) {
                 printf("GPRMC: %s\n", gprmc_buff);
+                char time_stamp_rms[200];
+                snprintf(time_stamp_rms, sizeof(time_stamp_rms),
+                        "%" PRIu64 ",%s\n", curr_timestamp, gprmc_buff);
+
                 UINT bytes_written;
-                fr = f_write(&file, "GPRMC: ", 7, &bytes_written);
-                fr = f_write(&file, gprmc_buff, strlen(gprmc_buff), &bytes_written);
-                f_write(&file, "\n", 1, &bytes_written);
+                fr = f_write(&gps_file, time_stamp_rms, strlen(time_stamp_rms), &bytes_written);
             }
             if (is_gpvtg_received) {
                 printf("GPVTG: %s\n", gpvtg_buff);
+                char time_stamp_vtg[200];
+                snprintf(time_stamp_vtg, sizeof(time_stamp_vtg),
+                        "%" PRIu64 ",%s\n", curr_timestamp, gpvtg_buff);
                 UINT bytes_written;
-                fr = f_write(&file, "GPVTG: ", 7, &bytes_written);
-                fr = f_write(&file, gpvtg_buff, strlen(gpvtg_buff), &bytes_written);
-                f_write(&file, "\n", 1, &bytes_written);
+                fr = f_write(&gps_file, time_stamp_vtg, strlen(time_stamp_vtg), &bytes_written);
             }
 
             printf("Data written to the SD card.\n");
-            write_imu_buffer(&file);
-            f_sync(&file); //ensure data is flushed to the SD card
+            write_imu_buffer(&imu_file, curr_timestamp);
+            f_sync(&imu_file);
+            f_sync(&gps_file); //ensure data is flushed to the SD card
 
             is_gprmc_received = 0;
             is_gpvtg_received = 0;
         }
     }
-    f_close(&file);
+    f_close(&gps_file);
+    f_close(&imu_file);
     f_unmount("0:");
     return 0;
 }
 
 void create_log_directory() {
-    fr = f_mkdir(LOG_DIR);
+    fr = f_mkdir(GPS_DIR);
     if (fr == FR_OK || fr == FR_EXIST) {
-        printf("Directory '%s' is ready\n", LOG_DIR);
+        printf("Directory '%s' is ready\n", GPS_DIR);
+    }
+    else {
+        printf("Error with creating directory: %d\n", fr);
+    }
+
+    fr = f_mkdir(IMU_DIR);
+    if (fr == FR_OK || fr == FR_EXIST) {
+        printf("Directory '%s' is ready\n", IMU_DIR);
     }
     else {
         printf("Error with creating directory: %d\n", fr);
@@ -226,6 +258,15 @@ int get_session_counter() {
     return counter;
 }
 
-void get_unique_filename(char *filename, int session) {
-    sprintf(filename, "%s/gps_log_%d.txt", LOG_DIR, session);
+void get_unique_filename(char *filename, int session, int is_imu) {
+    if (is_imu) {
+        sprintf(filename, "%s/imu_log_%d.csv", IMU_DIR, session);
+    }
+    else {
+        sprintf(filename, "%s/gps_log_%d.csv", GPS_DIR, session);
+    }
+}
+
+uint64_t generate_timestamp() {
+    return time_us_64();
 }

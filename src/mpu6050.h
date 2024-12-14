@@ -33,6 +33,6 @@ void read_sensor_data_corrected(int16_t *accel_x, int16_t *accel_y, int16_t *acc
                                 int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z);
 IMU_Reading read_imu();
 void process_imu_buffer();
-void write_imu_buffer(FIL *file);
+void write_imu_buffer(FIL *file, uint64_t curr_time);
 
 #endif
